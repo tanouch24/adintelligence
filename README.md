@@ -1,40 +1,71 @@
 # Ad Intelligence
 
-Socle interne de veille publicitaire, Ad Intelligence et Creative Intelligence pour Auryel, CEE / SSC / PAC et Feaseweb. Le projet est volontairement indépendant des autres projets de la machine.
+Plateforme interne de veille publicitaire et d'intelligence créative pour Auryel, CEE / SSC / PAC et Feaseweb.
 
 ## Stack
 
-- Next.js 16 avec App Router
-- React 19, TypeScript strict
+- Next.js 16 App Router, React 19, TypeScript strict
 - Tailwind CSS 4
-- ESLint
-- Architecture compatible PostgreSQL et déploiement futur Vercel / Railway / Netlify
+- PostgreSQL + Prisma 6.19
+- Zod pour la validation runtime des payloads normalisés
+- Vitest + tsx pour les tests et le seed
 
-## Lancer localement
+## Démarrage
 
-Lancer npm install puis npm run dev, puis ouvrir http://localhost:3000.
+1. Copier .env.example vers .env et renseigner DATABASE_URL.
+2. Installer : npm install.
+3. Générer le client : npm run db:generate.
+4. Valider le schéma : npm run db:validate.
+5. Appliquer les migrations en local : npm run db:migrate.
+6. Charger les données de démonstration : npm run db:seed.
+7. Lancer l'interface : npm run dev.
 
-## Structure
+Sans PostgreSQL, l'application continue de fonctionner avec ses données MOCK du Lot 1. Les routes API renvoient une erreur 503 explicite lorsque DATABASE_URL n'est pas configuré.
 
-- src/app : routes et shell UI
-- src/domain : modèles métier et données de démonstration
-- src/providers : frontière réservée aux futures intégrations
-- .env.example : variables futures, sans secret
+## Architecture de données
 
-## Lot 1
+prisma/schema.prisma contient les modèles persistants : Project, Advertiser, Ad, Creative, ProjectAd, Watchlist, SwipeFileItem, Analysis, SignalScore, PublicMetrics, AdObservation, GeneratedCreative, OwnAdAccount, OwnCampaign, OwnAdSet, OwnAd et OwnCampaignPerformance.
 
-Le Dashboard et Ad Explorer sont disponibles. Les chiffres, publicités, créas, métriques publiques, tendances et watchlists sont exclusivement MOCK et clairement signalés. Les boutons d'analyse, de génération et de connexion sont des points d'extension UI.
+Les données concurrentes sont séparées des données de nos campagnes par les modèles Ad/PublicMetrics d'un côté et Own* de l'autre. Le ROAS n'existe que sur OwnCampaignPerformance.
 
-Ne sont pas implémentés : API Meta / TikTok / Google / YouTube, API IA, base PostgreSQL, authentification, stockage média, synchronisations, métriques propriétaires et génération de créas.
+Les contraintes importantes sont :
 
-## Architecture métier préparée
+- Ad(platform, externalId) pour l'idempotence d'ingestion ;
+- Advertiser(platform, externalId) pour éviter les doublons annonceurs ;
+- ProjectAd(projectId, adId) pour la relation many-to-many ;
+- SwipeFileItem(projectId, adId) pour empêcher les doublons du Swipe File ;
+- AdObservation(adId, observedAt) pour un snapshot d'observation idempotent ;
+- Analysis(adId, version) pour versionner les futures analyses IA.
 
-Project, Platform, Advertiser, Ad, Creative, Watchlist, Analysis, GeneratedCreative et OwnCampaignPerformance sont définis dans src/domain/models.ts. Les performances propriétaires sont distinctes des signaux observables concurrents : aucun signal ne prétend représenter le ROAS ou la rentabilité.
+## Pipeline provider
 
-## Suite recommandée — Lot 2
+Les providers futurs implémenteront src/providers/contract.ts :
 
-1. Choisir PostgreSQL + ORM et définir les migrations.
-2. Ajouter l'authentification et le multi-projet.
-3. Implémenter un premier provider Meta avec ingestion idempotente et normalisation.
-4. Remplacer progressivement les mocks de l'Explorer par des requêtes paginées.
-5. Ajouter stockage média, historique de détection et audit des imports.
+Provider brut → normalizeAd() → validateNormalizedAd() avec Zod → ingestNormalizedAd() → transaction Prisma → upserts de l'annonceur, de l'Ad, des créas, des associations Project/Ad, de l'observation et des métriques publiques.
+
+Aucun provider Meta, TikTok, Google, YouTube ou IA n'est branché dans ce lot.
+
+## Couche data
+
+- src/data/db/prisma.ts : singleton Prisma compatible hot reload.
+- src/data/repositories/project-repository.ts
+- src/data/repositories/ads-repository.ts
+- src/data/repositories/watchlist-repository.ts
+- src/data/repositories/swipe-repository.ts
+- src/ingestion/service.ts : ingestion transactionnelle normalisée.
+- src/app/api/projects/route.ts et src/app/api/ads/route.ts : routes GET minimales, typées et sans exposition de rawPayload.
+
+## Seed et données DEMO
+
+prisma/seed.ts crée les trois projets initiaux, annonceurs, ads, creatives, observations, watchlists et un élément Swipe File. Toutes les valeurs sont explicitement suffixées ou marquées DEMO et utilisent des URLs demo.invalid.
+
+## Commandes qualité
+
+- npm run lint
+- npm run typecheck
+- npm test
+- npm run build
+
+## Variables
+
+Seule DATABASE_URL est nécessaire pour PostgreSQL. Les variables futures des providers ne sont pas ajoutées à ce lot. Aucun secret ne doit être commité ; .env est ignoré par Git.
